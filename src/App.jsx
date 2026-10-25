@@ -167,6 +167,7 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [upNext, setUpNext] = useState([]);
+  const [playlistIndex, setPlaylistIndex] = useState(0);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 600px)").matches);
   const playerRef = useRef(null);
   const playerIntervalRef = useRef(null);
@@ -238,6 +239,10 @@ function App() {
               const data = event.target.getVideoData();
               if (data?.title) setTrackTitle(data.title);
               setDuration(event.target.getDuration() || 0);
+              const currentIndex = event.target.getPlaylistIndex?.();
+              if (Number.isInteger(currentIndex) && currentIndex >= 0) {
+                setPlaylistIndex(currentIndex);
+              }
             } catch {}
           },
           onError: () => setTrackTitle("Não foi possível carregar a playlist"),
@@ -291,16 +296,19 @@ function App() {
       try {
         const ids = player.getPlaylist() || [];
         const currentIndex = Math.max(0, player.getPlaylistIndex?.() ?? 0);
-        const nextIds = Array.from({ length: 5 }, (_, i) => ids[(currentIndex + i + 1) % ids.length])
-          .filter(Boolean);
-        const tracks = await Promise.all(nextIds.map(async (videoId) => {
+        if (!ids.length) return;
+        const nextTracks = Array.from({ length: Math.min(5, Math.max(0, ids.length - 1)) }, (_, i) => {
+          const index = (currentIndex + i + 1) % ids.length;
+          return { videoId: ids[index], index };
+        }).filter((track) => Boolean(track.videoId));
+        const tracks = await Promise.all(nextTracks.map(async (track) => {
           try {
-            const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`);
+            const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${track.videoId}`)}&format=json`);
             if (!response.ok) throw new Error("oEmbed indisponível");
             const data = await response.json();
-            return { videoId, title: data.title || "Faixa do YouTube" };
+            return { ...track, title: data.title || "Faixa do YouTube" };
           } catch {
-            return { videoId, title: `Faixa ${videoId.slice(0, 6)}` };
+            return { ...track, title: `Faixa ${track.videoId.slice(0, 6)}` };
           }
         }));
         if (!cancelled) setUpNext(tracks);
@@ -309,12 +317,15 @@ function App() {
     const timer = window.setInterval(updateUpcoming, 8000);
     updateUpcoming();
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [loggedIn, trackTitle]);
+  }, [loggedIn, playlistIndex]);
 
-  function playPlaylistTrack(videoId) {
+  function playPlaylistTrack(index) {
+    const player = playerRef.current;
+    if (!player || !Number.isInteger(index)) return;
     try {
-      playerRef.current?.loadVideoById(videoId);
-      playerRef.current?.playVideo();
+      // Mantém a reprodução dentro da playlist para que Próxima/Anterior e UP NEXT continuem sincronizados.
+      player.playVideoAt(index);
+      setPlaylistIndex(index);
     } catch {}
   }
 
@@ -622,7 +633,7 @@ function App() {
               <ol className="up-next-list">
                 {upNext.slice(0, 5).map((track, index) => (
                   <li key={track.videoId}>
-                    <button type="button" onClick={() => playPlaylistTrack(track.videoId)}>
+                    <button type="button" onClick={() => playPlaylistTrack(track.index)}>
                       <span className="up-next-number">{String(index + 1).padStart(2, "0")}</span>
                       <span className="up-next-title">{track.title}</span>
                       <span className="up-next-play" aria-hidden="true">▶</span>
