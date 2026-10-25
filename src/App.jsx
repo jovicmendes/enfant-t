@@ -166,6 +166,8 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [upNext, setUpNext] = useState([]);
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 600px)").matches);
   const playerRef = useRef(null);
   const playerIntervalRef = useRef(null);
 
@@ -180,6 +182,14 @@ function App() {
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 600px)");
+    const update = () => setIsMobile(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
   }, []);
 
   // Inicializa a playlist do YouTube quando o usuário entra no desktop.
@@ -273,6 +283,41 @@ function App() {
     };
   }, [loggedIn]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const updateUpcoming = async () => {
+      const player = playerRef.current;
+      if (!player || typeof player.getPlaylist !== "function") return;
+      try {
+        const ids = player.getPlaylist() || [];
+        const currentIndex = Math.max(0, player.getPlaylistIndex?.() ?? 0);
+        const nextIds = Array.from({ length: 5 }, (_, i) => ids[(currentIndex + i + 1) % ids.length])
+          .filter(Boolean);
+        const tracks = await Promise.all(nextIds.map(async (videoId) => {
+          try {
+            const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`);
+            if (!response.ok) throw new Error("oEmbed indisponível");
+            const data = await response.json();
+            return { videoId, title: data.title || "Faixa do YouTube" };
+          } catch {
+            return { videoId, title: `Faixa ${videoId.slice(0, 6)}` };
+          }
+        }));
+        if (!cancelled) setUpNext(tracks);
+      } catch {}
+    };
+    const timer = window.setInterval(updateUpcoming, 8000);
+    updateUpcoming();
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [loggedIn, trackTitle]);
+
+  function playPlaylistTrack(videoId) {
+    try {
+      playerRef.current?.loadVideoById(videoId);
+      playerRef.current?.playVideo();
+    } catch {}
+  }
+
   function togglePlayback() {
     const player = playerRef.current;
     if (!player) return;
@@ -344,8 +389,8 @@ function App() {
             win.id === drag.id
               ? {
                   ...win,
-                  x: drag.windowX + dx,
-                  y: drag.windowY + dy,
+                  x: Math.max(-window.innerWidth + 100, Math.min(window.innerWidth - 80, drag.windowX + dx)),
+                  y: Math.max(48, Math.min(window.innerHeight - 90, drag.windowY + dy)),
                 }
               : win
           )
@@ -387,8 +432,8 @@ function App() {
       title: file.name,
       type: file.type,
       content: content ?? file.content ?? "",
-      x: 180 + (windows.length % 5) * 35,
-      y: 100 + (windows.length % 5) * 30,
+      x: isMobile ? 12 + (windows.length % 4) * 12 : 180 + (windows.length % 5) * 35,
+      y: isMobile ? 60 + (windows.length % 4) * 18 : 100 + (windows.length % 5) * 30,
       z: ++nextZ.current,
     };
 
@@ -434,6 +479,9 @@ function App() {
     if (event.target.closest("button")) return;
 
     focusWindow(win.id);
+    if (event.currentTarget.setPointerCapture && event.pointerId !== undefined) {
+      try { event.currentTarget.setPointerCapture(event.pointerId); } catch {}
+    }
 
     windowDragRef.current = {
       id: win.id,
@@ -564,6 +612,28 @@ function App() {
             <span>{isPlaying ? "TOCANDO" : "PLAYER PRONTO"}</span>
             <span className="music-volume-label">VOLUME DO YOUTUBE</span>
           </div>
+
+          <section className="up-next" aria-label="Próximas cinco faixas">
+            <div className="up-next-heading">
+              <span>UP NEXT</span>
+              <span>PRÓXIMAS FAIXAS</span>
+            </div>
+            {upNext.length ? (
+              <ol className="up-next-list">
+                {upNext.slice(0, 5).map((track, index) => (
+                  <li key={track.videoId}>
+                    <button type="button" onClick={() => playPlaylistTrack(track.videoId)}>
+                      <span className="up-next-number">{String(index + 1).padStart(2, "0")}</span>
+                      <span className="up-next-title">{track.title}</span>
+                      <span className="up-next-play" aria-hidden="true">▶</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="up-next-empty">Carregando a fila da playlist…</p>
+            )}
+          </section>
         </div>
       );
     }
@@ -762,8 +832,11 @@ function App() {
               top: file.y,
             }}
             onPointerDown={(event) => startFileDrag(event, file)}
-            onClick={() => setSelectedFile(file.id)}
-            onDoubleClick={() => openFile(file)}
+            onClick={() => {
+              setSelectedFile(file.id);
+              if (isMobile) openFile(file);
+            }}
+            onDoubleClick={() => { if (!isMobile) openFile(file); }}
             onContextMenu={(event) => {
               event.preventDefault();
               openFile(file);
