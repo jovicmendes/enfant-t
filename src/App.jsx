@@ -928,9 +928,6 @@ function App() {
         </span>
       </nav>
 
-      <div className="desktop-corner">
-        <span>ENFANT T.</span>
-      </div>
     </main>
   );
 }
