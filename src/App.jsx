@@ -930,7 +930,6 @@ function App() {
 
       <div className="desktop-corner">
         <span>ENFANT T.</span>
-        <span>PERSONAL DESKTOP</span>
       </div>
     </main>
   );
